@@ -9,15 +9,16 @@ import matplotlib.colors as mcolors
 import numpy as np
 from sklearn.linear_model import LinearRegression
 import altair as alt
+from pathlib import Path
 
 # === Configuración general ===
 st.set_page_config(page_title="Mapa de Nacimientos CR", layout="wide")
 st.title("🇨🇷 Visualización de Nacimientos y Educación en Costa Rica")
 
 st.markdown("""
-Explora cómo varían los **nacimientos por sexo** y el **nivel educativo de los padres** por provincia 🇨🇷  
-🟦 Azul = Hombres 🟥 Rojo = Mujeres ⬜ Blanco = Igual  
-También puedes ver la **educación del padre y la madre** con intensidad de color según los valores predominantes.  
+Explora cómo varían los **nacimientos por sexo** y el **nivel educativo de los padres** por provincia 🇨🇷
+🟦 Azul = Hombres 🟥 Rojo = Mujeres ⬜ Blanco = Igual
+También puedes ver la **educación del padre y la madre** con intensidad de color según los valores predominantes.
 Usa el *slider* inferior para seleccionar los años.
 """)
 
@@ -49,7 +50,11 @@ if uploaded_file:
     tabs = st.tabs(["1. 👶 Nacimientos por sexo", "2. 🧑‍🎓 Educación del padre", "3. 👩‍🎓 Educación de la madre", "4. 📆 Estacionalidad","5. Correlación", "6. 🔮 Proyecciones"])
 
     # ---- GeoJSON
-    geojson_path = "cr.json"
+    base_dir = Path(__file__).resolve().parent
+    geojson_path = base_dir / "cr.json"
+    if not geojson_path.exists():
+        st.error("❌ No se encontró el archivo de provincias 'cr.json'.")
+        st.stop()
     gdf = gpd.read_file(geojson_path)
     gdf["name"] = gdf["name"].astype(str)
 
