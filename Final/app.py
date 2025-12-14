@@ -1,14 +1,42 @@
-import streamlit as st
-import pandas as pd
-import geopandas as gpd
+import io
+from pathlib import Path
+
+import altair as alt
 import folium
-from streamlit_folium import st_folium
-import plotly.express as px
-import plotly.graph_objects as go
+import geopandas as gpd
 import matplotlib.colors as mcolors
 import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 from sklearn.linear_model import LinearRegression
-import altair as alt
+from streamlit_folium import st_folium
+
+@st.cache_data(show_spinner=False)
+def load_uploaded_csv(file_bytes: bytes) -> pd.DataFrame:
+    """Cache CSV parse to avoid re-reading on every rerun/interaction."""
+    return pd.read_csv(io.BytesIO(file_bytes))
+
+
+@st.cache_data(show_spinner=False)
+def load_geojson(path_str: str) -> gpd.GeoDataFrame:
+    """Cache GeoJSON read to prevent reloads and visual flicker."""
+    return gpd.read_file(path_str)
+
+def resolve_geojson_path() -> Path:
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        base_dir / 'cr.json',
+        Path.cwd() / 'cr.json',
+        Path.cwd() / 'Final' / 'cr.json',
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    st.error("No se encontró el archivo de provincias 'cr.json'. Colócalo junto a app.py o en la raíz del repo.")
+    st.stop()
+    return candidates[0]
 
 # === Configuración general ===
 st.set_page_config(page_title="Mapa de Nacimientos CR", layout="wide")
@@ -25,7 +53,8 @@ Usa el *slider* inferior para seleccionar los años.
 uploaded_file = st.file_uploader("📂 Sube tu archivo CSV con los datos de nacimientos", type=["csv"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    file_bytes = uploaded_file.getvalue()
+    df = load_uploaded_csv(file_bytes)
     df.columns = df.columns.str.strip()
 
     required_cols = {"Provocu", "Sexo", "Anotrab"}
@@ -49,8 +78,8 @@ if uploaded_file:
     tabs = st.tabs(["1. 👶 Nacimientos por sexo", "2. 🧑‍🎓 Educación del padre", "3. 👩‍🎓 Educación de la madre", "4. 📆 Estacionalidad","5. Correlación", "6. 🔮 Proyecciones"])
 
     # ---- GeoJSON
-    geojson_path = "cr.json"
-    gdf = gpd.read_file(geojson_path)
+    geojson_path = resolve_geojson_path()
+    gdf = load_geojson(str(geojson_path))
     gdf["name"] = gdf["name"].astype(str)
 
     # ==========================================================
