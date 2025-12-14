@@ -1,38 +1,23 @@
-import io
-from pathlib import Path
-
-import altair as alt
-import folium
-import geopandas as gpd
-import matplotlib.colors as mcolors
-import numpy as np
+import streamlit as st
 import pandas as pd
+import geopandas as gpd
+import folium
+from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
-import streamlit as st
+import matplotlib.colors as mcolors
+import numpy as np
 from sklearn.linear_model import LinearRegression
-from streamlit_folium import st_folium
-
-
-@st.cache_data(show_spinner=False)
-def load_uploaded_csv(file_bytes: bytes) -> pd.DataFrame:
-    """Cache CSV parse to avoid re-reading on every rerun/interaction."""
-    return pd.read_csv(io.BytesIO(file_bytes))
-
-
-@st.cache_data(show_spinner=False)
-def load_geojson(path_str: str) -> gpd.GeoDataFrame:
-    """Cache GeoJSON read to prevent reloads and visual flicker."""
-    return gpd.read_file(path_str)
+import altair as alt
 
 # === Configuración general ===
 st.set_page_config(page_title="Mapa de Nacimientos CR", layout="wide")
 st.title("🇨🇷 Visualización de Nacimientos y Educación en Costa Rica")
 
 st.markdown("""
-Explora cómo varían los **nacimientos por sexo** y el **nivel educativo de los padres** por provincia 🇨🇷
-🟦 Azul = Hombres 🟥 Rojo = Mujeres ⬜ Blanco = Igual
-También puedes ver la **educación del padre y la madre** con intensidad de color según los valores predominantes.
+Explora cómo varían los **nacimientos por sexo** y el **nivel educativo de los padres** por provincia 🇨🇷  
+🟦 Azul = Hombres 🟥 Rojo = Mujeres ⬜ Blanco = Igual  
+También puedes ver la **educación del padre y la madre** con intensidad de color según los valores predominantes.  
 Usa el *slider* inferior para seleccionar los años.
 """)
 
@@ -40,8 +25,7 @@ Usa el *slider* inferior para seleccionar los años.
 uploaded_file = st.file_uploader("📂 Sube tu archivo CSV con los datos de nacimientos", type=["csv"])
 
 if uploaded_file:
-    file_bytes = uploaded_file.getvalue()
-    df = load_uploaded_csv(file_bytes)
+    df = pd.read_csv(uploaded_file)
     df.columns = df.columns.str.strip()
 
     required_cols = {"Provocu", "Sexo", "Anotrab"}
@@ -65,12 +49,8 @@ if uploaded_file:
     tabs = st.tabs(["1. 👶 Nacimientos por sexo", "2. 🧑‍🎓 Educación del padre", "3. 👩‍🎓 Educación de la madre", "4. 📆 Estacionalidad","5. Correlación", "6. 🔮 Proyecciones"])
 
     # ---- GeoJSON
-    base_dir = Path(__file__).resolve().parent
-    geojson_path = base_dir / "cr.json"
-    if not geojson_path.exists():
-        st.error("❌ No se encontró el archivo de provincias 'cr.json'.")
-        st.stop()
-    gdf = load_geojson(str(geojson_path))
+    geojson_path = "cr.json"
+    gdf = gpd.read_file(geojson_path)
     gdf["name"] = gdf["name"].astype(str)
 
     # ==========================================================
@@ -355,86 +335,118 @@ if uploaded_file:
         st.subheader("🪄 Correlación nacimientos")
 
         if "Nivedmad" in df.columns and "Hijosten" in df.columns and "Anotrab" in df.columns:
-            # ---------- PARTE 1: BURBUJAS MEJORADAS ----------
-            orden_edu = [
-                "Ninguno", "Primaria incompleta", "Primaria completa",
-                "Secundaria incompleta", "Secundaria completa",
-                "Universitaria incompleta", "Universitaria completa",
-                "Ignorado"
-            ]
-            df["Nivedmad_cat"] = df["Nivedmad"].map({
-                0:"Ninguno",1:"Primaria incompleta",2:"Primaria completa",
-                3:"Secundaria incompleta",4:"Secundaria completa",
-                5:"Universitaria incompleta",6:"Universitaria completa",
-                9:"Ignorado"
-            }).astype("category")
+            
+            # Filtro de año específico para correlación
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown("### 🎯 Filtro por año")
+                selected_year_corr = st.slider(
+                    "Selecciona un año específico para análisis de correlación:",
+                    min_value=int(df["Anotrab"].min()),
+                    max_value=int(df["Anotrab"].max()),
+                    value=int(df["Anotrab"].max()),
+                    step=1,
+                    key="corr_year_slider"
+                )
+            with col2:
+                st.metric("📅 Año seleccionado", selected_year_corr)
+            
+            # Filtrar datos por el año seleccionado
+            df_year = df[df["Anotrab"] == selected_year_corr]
+            
+            if len(df_year) == 0:
+                st.warning(f"⚠️ No hay datos disponibles para el año {selected_year_corr}")
+            else:
+                # ---------- PARTE 1: BURBUJAS MEJORADAS ----------
+                orden_edu = [
+                    "Ninguno", "Primaria incompleta", "Primaria completa",
+                    "Secundaria incompleta", "Secundaria completa",
+                    "Universitaria incompleta", "Universitaria completa",
+                    "Ignorado"
+                ]
+                df_year["Nivedmad_cat"] = df_year["Nivedmad"].map({
+                    0:"Ninguno",1:"Primaria incompleta",2:"Primaria completa",
+                    3:"Secundaria incompleta",4:"Secundaria completa",
+                    5:"Universitaria incompleta",6:"Universitaria completa",
+                    9:"Ignorado"
+                }).astype("category")
 
-            corr_df = (
-                df.groupby("Nivedmad_cat", observed=True)
-                  .agg(Promedio_hijos=("Hijosten","mean"),
-                       Mediana_hijos=("Hijosten","median"),
-                       Cantidad=("Hijosten","count"))
-                  .reset_index()
-            )
-            corr_df["Nivedmad_cat"] = corr_df["Nivedmad_cat"].cat.set_categories(orden_edu, ordered=True)
-            corr_df = corr_df.sort_values("Nivedmad_cat")
+                corr_df = (
+                    df_year.groupby("Nivedmad_cat", observed=True)
+                      .agg(Promedio_hijos=("Hijosten","mean"),
+                           Mediana_hijos=("Hijosten","median"),
+                           Cantidad=("Hijosten","count"))
+                      .reset_index()
+                )
+                corr_df["Nivedmad_cat"] = corr_df["Nivedmad_cat"].cat.set_categories(orden_edu, ordered=True)
+                corr_df = corr_df.sort_values("Nivedmad_cat")
 
-            prom_nacional = df["Hijosten"].mean()
-            corr_df["Comparado_prom"] = corr_df["Promedio_hijos"].apply(
-                lambda v: "Sobre el promedio" if v >= prom_nacional else "Bajo el promedio"
-            )
-            # Calcular distancia del promedio para el tamaño de burbujas
-            corr_df["Distancia_promedio"] = abs(corr_df["Promedio_hijos"] - prom_nacional)
+                prom_nacional = df_year["Hijosten"].mean()
+                corr_df["Comparado_prom"] = corr_df["Promedio_hijos"].apply(
+                    lambda v: "Sobre el promedio" if v >= prom_nacional else "Bajo el promedio"
+                )
+                # Calcular distancia del promedio para el tamaño de burbujas
+                corr_df["Distancia_promedio"] = abs(corr_df["Promedio_hijos"] - prom_nacional)
 
-            st.markdown("### 🎈 Burbujas (promedio de hijos por nivel educativo)")
-            fig_bubble = px.scatter(
-                corr_df,
-                x="Promedio_hijos",
-                y="Nivedmad_cat",
-                size="Distancia_promedio",
-                color="Comparado_prom",
-                color_discrete_map={"Sobre el promedio":"#EF553B","Bajo el promedio":"#2CA02C"},
-                size_max=60,
-                text=corr_df["Promedio_hijos"].round(2),
-                hover_data={
-                    "Nivedmad_cat": True,
-                    "Promedio_hijos": ":.2f",
-                    "Mediana_hijos": ":.2f",
-                    "Cantidad": ":,",
-                    "Comparado_prom": True
-                },
-                title="Relación entre educación de la madre y número de hijos (promedio y tamaño de muestra)"
-            )
-            # estilo: ranking horizontal + línea de referencia nacional
-            fig_bubble.update_traces(
-                marker=dict(line=dict(width=1.2,color="rgba(0,0,0,0.5)")),
-                textposition="middle right",
-                selector=dict(mode="markers")
-            )
-            fig_bubble.update_layout(
-                yaxis_title="Nivel educativo de la madre",
-                xaxis_title="Promedio de hijos",
-                legend_title="Comparación con promedio nacional",
-                hovermode="y unified",
-                margin=dict(l=20,r=20,t=60,b=10)
-            )
-            fig_bubble.add_vline(x=prom_nacional, line_width=2, line_dash="dash", line_color="#636EFA",
-                                 annotation_text=f"Prom. nacional: {prom_nacional:.2f}",
-                                 annotation_position="top left")
-            st.plotly_chart(fig_bubble, use_container_width=True)
+                st.markdown(f"### 🎈 Burbujas (promedio de hijos por nivel educativo - Año {selected_year_corr})")
+                
+                # Mostrar información del año seleccionado
+                total_nacimientos = len(df_year)
+                st.info(f"""
+                **📊 Datos del año {selected_year_corr}:**
+                - **Total de nacimientos**: {total_nacimientos:,}
+                - **Promedio nacional de hijos**: {prom_nacional:.2f}
+                - **Mueve el slider para ver cómo cambian las correlaciones por año** 📅
+                """)
+                
+                fig_bubble = px.scatter(
+                    corr_df,
+                    x="Promedio_hijos",
+                    y="Nivedmad_cat",
+                    size="Distancia_promedio",
+                    color="Comparado_prom",
+                    color_discrete_map={"Sobre el promedio":"#EF553B","Bajo el promedio":"#2CA02C"},
+                    size_max=60,
+                    text=corr_df["Promedio_hijos"].round(2),
+                    hover_data={
+                        "Nivedmad_cat": True,
+                        "Promedio_hijos": ":.2f",
+                        "Mediana_hijos": ":.2f",
+                        "Cantidad": ":,",
+                        "Comparado_prom": True
+                    },
+                    title=f"Relación entre educación de la madre y número de hijos - {selected_year_corr}"
+                )
+                # estilo: ranking horizontal + línea de referencia nacional
+                fig_bubble.update_traces(
+                    marker=dict(line=dict(width=1.2,color="rgba(0,0,0,0.5)")),
+                    textposition="middle right",
+                    selector=dict(mode="markers")
+                )
+                fig_bubble.update_layout(
+                    yaxis_title="Nivel educativo de la madre",
+                    xaxis_title="Promedio de hijos",
+                    legend_title="Comparación con promedio nacional",
+                    hovermode="y unified",
+                    margin=dict(l=20,r=20,t=60,b=10)
+                )
+                fig_bubble.add_vline(x=prom_nacional, line_width=2, line_dash="dash", line_color="#636EFA",
+                                     annotation_text=f"Prom. nacional {selected_year_corr}: {prom_nacional:.2f}",
+                                     annotation_position="top left")
+                st.plotly_chart(fig_bubble, use_container_width=True)
 
-            st.markdown("#### 📋 Tabla resumen")
-            st.dataframe(
-                corr_df.rename(columns={
-                    "Nivedmad_cat":"Nivel educativo",
-                    "Promedio_hijos":"Promedio de hijos",
-                    "Mediana_hijos":"Mediana de hijos"
-                }).style.format({
-                    "Promedio de hijos":"{:.2f}",
-                    "Mediana de hijos":"{:.2f}",
-                    "Cantidad":"{:,.0f}"
-                })
-            )
+                st.markdown(f"#### 📋 Tabla resumen - Año {selected_year_corr}")
+                st.dataframe(
+                    corr_df.rename(columns={
+                        "Nivedmad_cat":"Nivel educativo",
+                        "Promedio_hijos":"Promedio de hijos",
+                        "Mediana_hijos":"Mediana de hijos"
+                    }).style.format({
+                        "Promedio de hijos":"{:.2f}",
+                        "Mediana de hijos":"{:.2f}",
+                        "Cantidad":"{:,.0f}"
+                    })
+                )
         
         else:
             st.warning("⚠️ El dataset no contiene las columnas requeridas para el análisis.")
@@ -445,22 +457,51 @@ if uploaded_file:
     with tabs[5]:
         st.subheader("🔮 Proyecciones de nacimientos (2024-2029)")
         
-        # Análisis de tendencias históricas
-        yearly_births = df.groupby(["Anotrab", "Sexo_nombre"]).size().reset_index(name="Nacimientos")
+        # Filtro de año base para proyecciones
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 🎯 Año base para proyecciones")
+            base_year = st.slider(
+                "Selecciona hasta qué año usar para calcular la tendencia:",
+                min_value=int(df["Anotrab"].min()),
+                max_value=int(df["Anotrab"].max()),
+                value=int(df["Anotrab"].max()),
+                step=1,
+                key="proj_base_year_slider"
+            )
+        with col2:
+            st.metric("📅 Año base", base_year)
         
-        # Preparar datos para regresión
-        proyecciones = {}
-        colores = {"Hombre": "#0050B8", "Mujer": "#E13C3C"}
+        st.info(f"""
+        **📊 ¿Qué significa esto?**
         
-        # Años futuros para proyección
-        years_actual = yearly_births["Anotrab"].unique()
-        future_years = np.arange(max(years_actual) + 1, max(years_actual) + 6)
-        all_years = np.concatenate([years_actual, future_years])
+        - **Año base**: Se usarán datos desde el primer año hasta **{base_year}** para calcular la tendencia
+        - **Proyecciones**: Se proyectará desde **{base_year + 1}** hasta **{base_year + 5}**
+        - **Mueve el slider** para ver cómo cambian las proyecciones según diferentes períodos base 📅
+        """)
         
-        st.markdown("### 📊 Análisis de tendencias y proyecciones")
+        # Filtrar datos hasta el año base seleccionado
+        df_base = df[df["Anotrab"] <= base_year]
         
-        # Crear figura principal
-        fig_projection = go.Figure()
+        if len(df_base) < 3:
+            st.warning(f"⚠️ Se necesitan al menos 3 años de datos para hacer proyecciones. Año base: {base_year}")
+        else:
+            # Análisis de tendencias históricas
+            yearly_births = df_base.groupby(["Anotrab", "Sexo_nombre"]).size().reset_index(name="Nacimientos")
+            
+            # Preparar datos para regresión
+            proyecciones = {}
+            colores = {"Hombre": "#0050B8", "Mujer": "#E13C3C"}
+            
+            # Años futuros para proyección (desde año base + 1)
+            years_actual = yearly_births["Anotrab"].unique()
+            future_years = np.arange(base_year + 1, base_year + 6)
+            all_years = np.concatenate([years_actual, future_years])
+            
+            st.markdown(f"### 📊 Análisis de tendencias y proyecciones (Base: hasta {base_year})")
+            
+            # Crear figura principal
+            fig_projection = go.Figure()
         
         for sexo in ["Hombre", "Mujer"]:
             data_sexo = yearly_births[yearly_births["Sexo_nombre"] == sexo]
@@ -516,35 +557,33 @@ if uploaded_file:
                 "intercepto": model.intercept_,
                 "r2": model.score(X, y),
                 "proyecciones": list(zip(future_years, y_future))
-            }
-        
-        # Agregar banda de separación entre histórico y proyectado
-        max_year_hist = max(years_actual)
-        fig_projection.add_vline(
-            x=max_year_hist + 0.5,
-            line_dash="solid",
-            line_color="gray",
-            line_width=2,
-            annotation_text="Proyecciones",
-            annotation_position="top"
-        )
-        
-        # Configurar diseño
-        fig_projection.update_layout(
-            title="Proyección de nacimientos por sexo (2024-2029)",
-            xaxis_title="Año",
-            yaxis_title="Número de nacimientos",
-            hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            ),
-            margin=dict(l=10, r=10, t=80, b=10),
-            height=500
-        )
+            }            # Agregar banda de separación entre histórico y proyectado
+            max_year_hist = base_year
+            fig_projection.add_vline(
+                x=max_year_hist + 0.5,
+                line_dash="solid",
+                line_color="gray",
+                line_width=2,
+                annotation_text="Proyecciones",
+                annotation_position="top"
+            )
+            
+            # Configurar diseño
+            fig_projection.update_layout(
+                title=f"Proyección de nacimientos por sexo ({base_year + 1}-{base_year + 5}) - Base: hasta {base_year}",
+                xaxis_title="Año",
+                yaxis_title="Número de nacimientos",
+                hovermode="x unified",
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                margin=dict(l=10, r=10, t=80, b=10),
+                height=500
+            )
         
         st.plotly_chart(fig_projection, use_container_width=True)
         
@@ -571,42 +610,50 @@ if uploaded_file:
             if stats_m['pendiente'] > 0:
                 st.success("📈 Tendencia creciente")
             else:
-                st.error("📉 Tendencia decreciente")
-        
-        # Tabla de proyecciones detallada
-        st.markdown("### 📅 Proyecciones detalladas por año")
-        
-        proyeccion_table = []
-        for year in future_years:
-            hombres_proj = next(p[1] for p in proyecciones["Hombre"]["proyecciones"] if p[0] == year)
-            mujeres_proj = next(p[1] for p in proyecciones["Mujer"]["proyecciones"] if p[0] == year)
-            total_proj = hombres_proj + mujeres_proj
+                st.error("📉 Tendencia decreciente")            # Tabla de proyecciones detallada
+            st.markdown(f"### 📅 Proyecciones detalladas por año (Base: hasta {base_year})")
             
-            proyeccion_table.append({
-                "Año": int(year),
-                "Hombres": int(round(hombres_proj)),
-                "Mujeres": int(round(mujeres_proj)),
-                "Total": int(round(total_proj)),
-                "% Hombres": f"{(hombres_proj/total_proj)*100:.1f}%",
-                "% Mujeres": f"{(mujeres_proj/total_proj)*100:.1f}%"
-            })
-        
-        df_proyecciones = pd.DataFrame(proyeccion_table)
-        st.dataframe(df_proyecciones, use_container_width=True)
-        
-        # Gráfico de nacimientos proyectados por sexo
-        st.markdown("### 👥 Nacimientos proyectados por sexo")
-        
-        st.info("""
-        **📊 ¿Cómo leer este gráfico?**
-        
-        - **Barras azules**: Nacimientos proyectados de hombres 👦
-        - **Barras rojas**: Nacimientos proyectados de mujeres 👧
-        - **Números arriba**: Cantidad exacta de nacimientos proyectados
-        - **Comparación**: Puedes ver fácilmente las diferencias entre ambos sexos año por año
-        
-        📈 **Contexto biológico normal**: Suelen nacer ~105 hombres por cada 100 mujeres
-        """)
+            # Mostrar información sobre el período base
+            years_used = len(years_actual)
+            st.info(f"""
+            **📊 Información del análisis:**
+            - **Años usados para la tendencia**: {min(years_actual)} - {base_year} ({years_used} años)
+            - **Años proyectados**: {base_year + 1} - {base_year + 5}
+            - **R² Hombres**: {proyecciones["Hombre"]["r2"]:.3f} | **R² Mujeres**: {proyecciones["Mujer"]["r2"]:.3f}
+            """)
+            
+            proyeccion_table = []
+            for year in future_years:
+                hombres_proj = next(p[1] for p in proyecciones["Hombre"]["proyecciones"] if p[0] == year)
+                mujeres_proj = next(p[1] for p in proyecciones["Mujer"]["proyecciones"] if p[0] == year)
+                total_proj = hombres_proj + mujeres_proj
+                
+                proyeccion_table.append({
+                    "Año": int(year),
+                    "Hombres": int(round(hombres_proj)),
+                    "Mujeres": int(round(mujeres_proj)),
+                    "Total": int(round(total_proj)),
+                    "% Hombres": f"{(hombres_proj/total_proj)*100:.1f}%",
+                    "% Mujeres": f"{(mujeres_proj/total_proj)*100:.1f}%"
+                })
+            
+            df_proyecciones = pd.DataFrame(proyeccion_table)
+            st.dataframe(df_proyecciones, use_container_width=True)
+            
+            # Gráfico de nacimientos proyectados por sexo
+            st.markdown(f"### 👥 Nacimientos proyectados por sexo (Base: hasta {base_year})")
+            
+            st.info(f"""
+            **📊 ¿Cómo leer este gráfico?**
+            
+            - **Barras azules**: Nacimientos proyectados de hombres 👦
+            - **Barras rojas**: Nacimientos proyectados de mujeres 👧
+            - **Números arriba**: Cantidad exacta de nacimientos proyectados
+            - **Año base**: Proyecciones calculadas usando datos hasta {base_year}
+            - **Mueve el slider** para ver cómo cambian las proyecciones con diferentes años base 📅
+            
+            📈 **Contexto biológico normal**: Suelen nacer ~105 hombres por cada 100 mujeres
+            """)
         
         # Preparar datos para el gráfico de barras agrupadas
         proj_data = []
@@ -623,15 +670,15 @@ if uploaded_file:
         
         # Crear gráfico de barras agrupadas
         fig_sexo = px.bar(
-            df_proj,
-            x="Año",
-            y="Nacimientos",
-            color="Sexo",
-            color_discrete_map={"Hombre": "#0050B8", "Mujer": "#E13C3C"},
-            barmode="group",
-            text="Nacimientos",
-            title="Proyección de nacimientos por sexo (2024-2029)"
-        )
+                df_proj,
+                x="Año",
+                y="Nacimientos",
+                color="Sexo",
+                color_discrete_map={"Hombre": "#0050B8", "Mujer": "#E13C3C"},
+                barmode="group",
+                text="Nacimientos",
+                title=f"Proyección de nacimientos por sexo ({base_year + 1}-{base_year + 5})"
+            )
         
         # Configurar el diseño
         fig_sexo.update_traces(
@@ -682,12 +729,12 @@ if uploaded_file:
         fig_diff.add_hline(y=0, line_dash="dash", line_color="black", line_width=1)
         
         fig_diff.update_layout(
-            title="Diferencia entre nacimientos proyectados (Hombres - Mujeres)",
-            xaxis_title="Año",
-            yaxis_title="Diferencia en nacimientos",
-            showlegend=False,
-            height=350
-        )
+                title=f"Diferencia entre nacimientos proyectados ({base_year + 1}-{base_year + 5}) - Base: hasta {base_year}",
+                xaxis_title="Año",
+                yaxis_title="Diferencia en nacimientos",
+                showlegend=False,
+                height=350
+            )
         
         st.plotly_chart(fig_diff, use_container_width=True)
         
@@ -698,16 +745,17 @@ if uploaded_file:
         tendencia_m = "creciente" if stats_m['pendiente'] > 0 else "decreciente"
         
         st.info(f"""
-        **Resumen de proyecciones:**
+        **Resumen de proyecciones (Base: hasta {base_year}):**
         
         • **Hombres**: Tendencia {tendencia_h} de {abs(stats_h['pendiente']):.0f} nacimientos por año
         • **Mujeres**: Tendencia {tendencia_m} de {abs(stats_m['pendiente']):.0f} nacimientos por año
         • **Confiabilidad**: Los modelos explican {stats_h['r2']*100:.1f}% (H) y {stats_m['r2']*100:.1f}% (M) de la variabilidad
-        • **Proyección 2029**: {df_proyecciones.iloc[-1]['Total']:,} nacimientos totales estimados
+        • **Proyección {base_year + 5}**: {df_proyecciones.iloc[-1]['Total']:,} nacimientos totales estimados
+        • **Años base usados**: {min(years_actual)} - {base_year} ({len(years_actual)} años)
         """)
         
         if abs(stats_h['pendiente'] - stats_m['pendiente']) > 50:
             st.warning("⚠️ Se observa una diferencia significativa en las tendencias entre sexos.")
         
         st.markdown("---")
-        st.markdown("*Nota: Las proyecciones se basan en regresión lineal de datos históricos. Los resultados pueden variar por factores socioeconómicos, políticas públicas y eventos externos no contemplados en el modelo.*")
+        st.markdown(f"*Nota: Las proyecciones se basan en regresión lineal usando datos de {min(years_actual)}-{base_year}. Los resultados pueden variar por factores socioeconómicos, políticas públicas y eventos externos no contemplados en el modelo. Cambia el año base para ver diferentes escenarios.*")
