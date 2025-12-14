@@ -44,6 +44,9 @@ streamlit run app.py
 ```
 Abre en el navegador la URL local generada (por defecto http://localhost:8501).
 
+## Tema visual
+El tema de Streamlit ahora se define en `.streamlit/config.toml` con un estilo oscuro y acento celeste. Si quieres otro look, ajusta los valores `primaryColor`, `backgroundColor` o `secondaryBackgroundColor` en ese archivo.
+
 ## Flujo de uso recomendado
 - Cargar el archivo CSV mediante el uploader.
 - Ajustar el rango de años con el control deslizante.
