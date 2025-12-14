@@ -34,7 +34,7 @@ def resolve_geojson_path() -> Path:
     for path in candidates:
         if path.exists():
             return path
-    st.error("No se encontró el archivo de provincias 'cr.json'. Colócalo junto a app.py o en la raíz del repo.")
+    st.error("No se encontro el archivo de provincias 'cr.json'. Colocalo junto a app.py o en la raiz del repo.")
     st.stop()
     return candidates[0]
 
